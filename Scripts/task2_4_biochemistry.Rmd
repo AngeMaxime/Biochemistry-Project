@@ -1,14 +1,15 @@
 ---
-title: "Task Code 2.4 — Biochemistry & Oncology: Mutational Impact on Protein Structure & Function"
-author: "HackBio Internship"
+title: "Task — Biochemistry & Oncology: Mutational Impact on Protein Structure & Function"
+author: "Ange Maxime TCHOUTANG"
 date: "`r Sys.Date()`"
 output:
   html_document:
     toc: true
     toc_float: true
+    toc_depth: 3
     theme: flatly
     highlight: tango
-    code_folding: show
+    number_sections: true
 ---
 
 ```{r setup, include=FALSE}
@@ -51,6 +52,13 @@ pacman::p_load(
 sift <- read.delim(
   "https://raw.githubusercontent.com/HackBio-Internship/public_datasets/main/R/datasets/sift.tsv",
   sep = "\t", stringsAsFactors = FALSE
+) # due to the characteristic of the tsv format, we have an error
+
+sift <- read.table(
+  "https://raw.githubusercontent.com/HackBio-Internship/public_datasets/main/R/datasets/sift.tsv",
+  header = TRUE,
+  sep = "",               # handles both tabs and multiple spaces
+  stringsAsFactors = FALSE
 )
 
 # ── FoldX dataset ────────────────────────────────────────────
@@ -60,6 +68,13 @@ sift <- read.delim(
 foldx <- read.delim(
   "https://raw.githubusercontent.com/HackBio-Internship/public_datasets/main/R/datasets/foldX.tsv",
   sep = "\t", stringsAsFactors = FALSE
+)
+
+foldx <- read.delim(
+  "https://raw.githubusercontent.com/HackBio-Internship/public_datasets/main/R/datasets/foldX.tsv",
+  header = TRUE,
+  sep = "", 
+  stringsAsFactors = FALSE
 )
 
 # ── Quick overview ───────────────────────────────────────────
@@ -117,10 +132,14 @@ head(foldx$specific_Protein_aa, 10)
 # This ensures every row has both a SIFT score and a FoldX score.
 
 merged_df <- inner_join(
-  sift  %>% select(specific_Protein_aa, Protein, Amino_Acid, sift_Score),
-  foldx %>% select(specific_Protein_aa, foldX_Score),
+  sift  %>% 
+    select(specific_Protein_aa, Protein, Amino_Acid, sift_Score),
+  foldx %>%
+    select(specific_Protein_aa, foldX_Score),
   by = "specific_Protein_aa"
 )
+
+write.csv(merged_df, "Dataset_cleaned.csv", row.names = FALSE)
 
 # ── Check the merged result ──────────────────────────────────
 cat("=== Merged Dataset ===\n")
@@ -132,7 +151,7 @@ colSums(is.na(merged_df))   # check for any missing values after merge
 > **After merging:**
 > Only mutations that have **both** a SIFT score and a FoldX score are
 > retained. Any mutation measured in only one dataset is excluded.
-> The final dataframe has 4 meaningful columns:
+> The final dataframe has 5 meaningful columns:
 > `specific_Protein_aa`, `Protein`, `Amino_Acid`, `sift_Score`, `foldX_Score`.
 
 ---
@@ -149,6 +168,8 @@ colSums(is.na(merged_df))   # check for any missing values after merge
 deleterious <- merged_df %>%
   filter(sift_Score  < 0.05,
          foldX_Score > 2.00)
+
+write.csv(deleterious, "Deleterious.csv", row.names = FALSE)
 
 # ── How many such mutations exist? ───────────────────────────
 cat(sprintf("Total mutations in merged dataset : %d\n", nrow(merged_df)))
@@ -289,6 +310,9 @@ barplot_aa <- ggplot(aa_freq,
   theme_bio
 
 print(barplot_aa)
+
+ggsave("bar_plot.png", width = 12, height = 8, dpi = 150)
+cat("✔ Saved: histograms.png\n")
 ```
 
 > **Observation from bar plot:**
@@ -342,6 +366,9 @@ pie_aa <- ggplot(aa_freq_pct,
   )
 
 print(pie_aa)
+
+ggsave("Pie.png", width = 12, height = 8, dpi = 150)
+cat("✔ Saved: piee diagram.png\n")
 ```
 
 ---
@@ -358,6 +385,9 @@ combined_plot <- barplot_aa + pie_aa +
   )
 
 print(combined_plot)
+
+ggsave("graph_combined.png", width = 12, height = 8, dpi = 150)
+cat("✔ Saved: Combinaison of both graphs.png\n")
 ```
 
 ---
@@ -525,6 +555,9 @@ scatter_scores <- ggplot(merged_df,
   )
 
 print(scatter_scores)
+
+ggsave("Scatter_scores.png", width = 12, height = 8, dpi = 150)
+cat("✔ Saved: Scatter_scores.png\n")
 ```
 
 ---
@@ -557,4 +590,4 @@ print(scatter_scores)
 
 ---
 
-*End of Task 2.4 — Biochemistry & Oncology Mutational Impact Analysis*
+*End of Task — Biochemistry & Oncology Mutational Impact Analysis*
