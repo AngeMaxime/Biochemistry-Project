@@ -1,0 +1,560 @@
+---
+title: "Task Code 2.4 — Biochemistry & Oncology: Mutational Impact on Protein Structure & Function"
+author: "HackBio Internship"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+# Global chunk options applied to all code chunks
+knitr::opts_chunk$set(
+  echo    = TRUE,    # display code in rendered output
+  message = FALSE,   # suppress package loading messages
+  warning = FALSE,   # suppress warnings
+  fig.width  = 10,
+  fig.height = 6
+)
+```
+
+---
+
+# 1. Load Packages
+
+```{r packages}
+# pacman installs missing packages automatically before loading
+if (!require("pacman")) install.packages("pacman")
+
+pacman::p_load(
+  tidyverse,   # dplyr (data wrangling) + ggplot2 (visualization) + stringr
+  ggplot2,     # explicit for clarity
+  scales,      # axis label formatting (percent, comma)
+  patchwork    # combine multiple plots into panels
+)
+```
+
+---
+
+# 2. Import the Datasets
+
+```{r import-data}
+# ── SIFT dataset ─────────────────────────────────────────────
+# SIFT (Sorting Intolerant From Tolerant) predicts whether an amino
+# acid substitution affects protein FUNCTION.
+# Score < 0.05 → mutation is DELETERIOUS to function
+
+sift <- read.delim(
+  "https://raw.githubusercontent.com/HackBio-Internship/public_datasets/main/R/datasets/sift.tsv",
+  sep = "\t", stringsAsFactors = FALSE
+)
+
+# ── FoldX dataset ────────────────────────────────────────────
+# FoldX estimates the change in protein folding free energy (ΔΔG).
+# Score > 2 kCal/mol → mutation is DELETERIOUS to structure
+
+foldx <- read.delim(
+  "https://raw.githubusercontent.com/HackBio-Internship/public_datasets/main/R/datasets/foldX.tsv",
+  sep = "\t", stringsAsFactors = FALSE
+)
+
+# ── Quick overview ───────────────────────────────────────────
+cat("=== SIFT Dataset ===\n")
+dim(sift)
+head(sift)
+
+cat("\n=== FoldX Dataset ===\n")
+dim(foldx)
+head(foldx)
+```
+
+> **What we observe:**
+> Both datasets share two key columns: `Protein` (UniProt accession ID)
+> and `Amino_Acid` (mutation in standard nomenclature e.g. `E63D`).
+> The SIFT dataset has scores from 0 to 1; FoldX has scores that can be
+> negative (stabilising) or positive (destabilising).
+
+---
+
+# 3. Create the `specific_Protein_aa` Column
+
+```{r specific-protein-aa}
+# ── Concatenate Protein + Amino_Acid with underscore separator ──
+# This creates a unique identifier for each mutation per protein
+# Example: Protein = "A5A607", Amino_Acid = "E63D"
+#          → specific_Protein_aa = "A5A607_E63D"
+
+sift <- sift %>%
+  mutate(specific_Protein_aa = paste(Protein, Amino_Acid, sep = "_"))
+
+foldx <- foldx %>%
+  mutate(specific_Protein_aa = paste(Protein, Amino_Acid, sep = "_"))
+
+# ── Verify the new column ────────────────────────────────────
+cat("=== SIFT — new column preview ===\n")
+head(sift$specific_Protein_aa, 10)
+
+cat("\n=== FoldX — new column preview ===\n")
+head(foldx$specific_Protein_aa, 10)
+```
+
+> The `specific_Protein_aa` column now acts as a **unique key** that
+> identifies exactly which amino acid position in which protein was mutated.
+> This is critical for correctly merging the two datasets — without it,
+> the same mutation code (e.g. `E63D`) could match across different proteins.
+
+---
+
+# 4. Merge SIFT and FoldX Datasets
+
+```{r merge-datasets}
+# ── Inner join on the specific_Protein_aa key ────────────────
+# Inner join keeps ONLY mutations present in BOTH datasets.
+# This ensures every row has both a SIFT score and a FoldX score.
+
+merged_df <- inner_join(
+  sift  %>% select(specific_Protein_aa, Protein, Amino_Acid, sift_Score),
+  foldx %>% select(specific_Protein_aa, foldX_Score),
+  by = "specific_Protein_aa"
+)
+
+# ── Check the merged result ──────────────────────────────────
+cat("=== Merged Dataset ===\n")
+dim(merged_df)
+head(merged_df, 10)
+colSums(is.na(merged_df))   # check for any missing values after merge
+```
+
+> **After merging:**
+> Only mutations that have **both** a SIFT score and a FoldX score are
+> retained. Any mutation measured in only one dataset is excluded.
+> The final dataframe has 4 meaningful columns:
+> `specific_Protein_aa`, `Protein`, `Amino_Acid`, `sift_Score`, `foldX_Score`.
+
+---
+
+# 5. Filter Deleterious Mutations (Both Structure AND Function)
+
+```{r deleterious-filter}
+# ── Apply the authors' criteria ──────────────────────────────
+# SIFT  < 0.05       → mutation disrupts protein FUNCTION
+# FoldX > 2 kCal/mol → mutation disrupts protein STRUCTURE
+#
+# We want mutations that are deleterious in BOTH dimensions simultaneously
+
+deleterious <- merged_df %>%
+  filter(sift_Score  < 0.05,
+         foldX_Score > 2.00)
+
+# ── How many such mutations exist? ───────────────────────────
+cat(sprintf("Total mutations in merged dataset : %d\n", nrow(merged_df)))
+cat(sprintf("Doubly deleterious mutations      : %d\n", nrow(deleterious)))
+cat(sprintf("Percentage                        : %.2f%%\n",
+            nrow(deleterious) / nrow(merged_df) * 100))
+
+# ── Preview the deleterious mutations ───────────────────────
+head(deleterious, 20)
+```
+
+> **Observation:** Only a **small fraction** of all mutations are doubly
+> deleterious — affecting both protein structure and function simultaneously.
+> This aligns with the biological principle that most mutations are neutral
+> or only mildly disruptive. The ones identified here are the most
+> biologically dangerous variants — candidates for disease-causing mutations.
+
+---
+
+# 6. Amino Acid Substitution Nomenclature
+
+```{r aa-nomenclature}
+# ── Understanding the Amino_Acid column format ───────────────
+# Standard HGVS-like protein substitution notation: XposY
+#   X   = original (wild-type) amino acid (single-letter code)
+#   pos = position in the protein sequence (integer)
+#   Y   = new (mutant) amino acid (single-letter code)
+#
+# Example: "E63D"
+#   E = Glutamic acid (wild-type) at position 63
+#   D = Aspartic acid (mutant)
+#
+# To find the amino acid with the MOST structural + functional impact,
+# we extract the FIRST CHARACTER of Amino_Acid → the original AA
+
+# ── Extract the wild-type (original) amino acid ──────────────
+# substr(string, start, stop) extracts characters by position
+# substr(x, 1, 1) → first character only
+
+deleterious <- deleterious %>%
+  mutate(wt_aa = substr(Amino_Acid, 1, 1))
+
+# ── Preview ──────────────────────────────────────────────────
+head(deleterious %>% select(Amino_Acid, wt_aa), 15)
+
+# ── Map single-letter codes to full amino acid names ─────────
+aa_names <- c(
+  A = "Alanine",       C = "Cysteine",    D = "Aspartic Acid",
+  E = "Glutamic Acid", F = "Phenylalanine",G = "Glycine",
+  H = "Histidine",     I = "Isoleucine",  K = "Lysine",
+  L = "Leucine",       M = "Methionine",  N = "Asparagine",
+  P = "Proline",       Q = "Glutamine",   R = "Arginine",
+  S = "Serine",        T = "Threonine",   V = "Valine",
+  W = "Tryptophan",    Y = "Tyrosine"
+)
+
+deleterious <- deleterious %>%
+  mutate(wt_aa_name = aa_names[wt_aa])
+```
+
+> **Nomenclature note:**
+> The first character of the `Amino_Acid` code represents the **original
+> amino acid** before mutation. By extracting and counting these, we can
+> identify which wild-type amino acids — when mutated — cause the most
+> simultaneous structural and functional damage.
+
+---
+
+# 7. Frequency Table of Amino Acids
+
+```{r freq-table}
+# ── Count how many doubly deleterious mutations each WT AA has ─
+aa_freq <- deleterious %>%
+  count(wt_aa, wt_aa_name, name = "Frequency") %>%
+  arrange(desc(Frequency))
+
+# ── Print the frequency table ────────────────────────────────
+print(aa_freq)
+
+# ── Identify the amino acid with the HIGHEST impact ──────────
+top_aa <- aa_freq %>% slice(1)
+cat(sprintf(
+  "\nAmino acid with the most structural & functional impact:\n→ %s (%s) with %d deleterious mutations\n",
+  top_aa$wt_aa, top_aa$wt_aa_name, top_aa$Frequency
+))
+
+# ── Amino acids with more than 100 occurrences ───────────────
+high_impact <- aa_freq %>% filter(Frequency > 100)
+cat("\nAmino acids with more than 100 deleterious mutations:\n")
+print(high_impact)
+```
+
+> **Observation:**
+> The frequency table tells us which original amino acids, when substituted,
+> most frequently produce mutations that are deleterious to BOTH structure
+> and function. High-frequency amino acids tend to occupy **critical positions**
+> in the protein — often buried hydrophobic cores or active sites where
+> any change disrupts folding or catalytic activity.
+
+---
+
+# 8. Bar Plot — Amino Acid Frequency
+
+```{r barplot}
+# ── Define a clean consistent theme ─────────────────────────
+theme_bio <- theme_minimal(base_size = 13) +
+  theme(
+    plot.title       = element_text(face = "bold", size = 14),
+    plot.subtitle    = element_text(color = "grey50", size = 11),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    axis.text.x      = element_text(angle = 45, hjust = 1, face = "bold")
+  )
+
+# ── Bar plot ─────────────────────────────────────────────────
+barplot_aa <- ggplot(aa_freq,
+                     aes(x    = reorder(wt_aa_name, -Frequency),
+                         y    = Frequency,
+                         fill = Frequency)) +
+  geom_col(color = "white", width = 0.75) +
+  geom_text(aes(label = Frequency),
+            vjust = -0.4, size = 3.5, fontface = "bold") +
+  # Highlight amino acids with > 100 occurrences
+  geom_hline(yintercept = 100, linetype = "dashed",
+             color = "red", linewidth = 0.8) +
+  annotate("text", x = 1, y = 105,
+           label = "Threshold: 100 mutations",
+           color = "red", size = 3.5, hjust = 0) +
+  scale_fill_gradient(low = "#90CAF9", high = "#1A237E") +
+  labs(
+    title    = "Frequency of Wild-Type Amino Acids in Doubly Deleterious Mutations",
+    subtitle = "Mutations with SIFT < 0.05 AND FoldX > 2 kCal/mol",
+    x        = "Wild-Type Amino Acid",
+    y        = "Number of Deleterious Mutations",
+    fill     = "Frequency",
+    caption  = "Source: Galardini et al. | HackBio Dataset"
+  ) +
+  theme_bio
+
+print(barplot_aa)
+```
+
+> **Observation from bar plot:**
+> The bar plot reveals a clear hierarchy — some amino acids appear in
+> deleterious mutations far more frequently than others. Amino acids
+> with tall bars are those whose substitution is most likely to
+> simultaneously disrupt protein stability and function.
+> The red dashed line marks the **100-mutation threshold** to visually
+> separate high-impact from moderate-impact amino acids.
+
+---
+
+# 9. Pie Chart — Amino Acid Frequency
+
+```{r piechart}
+# ── Compute percentage for each amino acid ───────────────────
+aa_freq_pct <- aa_freq %>%
+  mutate(
+    Percentage = round(Frequency / sum(Frequency) * 100, 1),
+    Label      = paste0(wt_aa, "\n", Percentage, "%")
+  )
+
+# ── Pie chart ────────────────────────────────────────────────
+pie_aa <- ggplot(aa_freq_pct,
+                 aes(x    = "",
+                     y    = Frequency,
+                     fill = wt_aa_name)) +
+  geom_col(color = "white", width = 1) +
+  coord_polar(theta = "y") +                # convert bar → pie
+  geom_text(aes(label = ifelse(Percentage >= 3, Label, "")),
+            position = position_stack(vjust = 0.5),
+            size = 3.2, fontface = "bold", color = "white") +
+  scale_fill_manual(values = colorRampPalette(
+    c("#1A237E", "#1565C0", "#1E88E5", "#42A5F5",
+      "#90CAF9", "#E3F2FD", "#B71C1C", "#E53935",
+      "#EF9A9A", "#1B5E20", "#2E7D32", "#66BB6A",
+      "#F57F17", "#FFA000", "#FFD54F", "#4A148C",
+      "#7B1FA2", "#CE93D8", "#880E4F", "#E91E63")
+  )(nrow(aa_freq_pct))) +
+  labs(
+    title    = "Proportion of Wild-Type Amino Acids in Doubly Deleterious Mutations",
+    subtitle = "Labels shown for amino acids ≥ 3% of total",
+    fill     = "Amino Acid",
+    caption  = "Source: Galardini et al. | HackBio Dataset"
+  ) +
+  theme_void(base_size = 13) +
+  theme(
+    plot.title    = element_text(face = "bold", size = 14, hjust = 0.5),
+    plot.subtitle = element_text(color = "grey50", size = 11, hjust = 0.5),
+    legend.position = "right"
+  )
+
+print(pie_aa)
+```
+
+---
+
+# 10. Combined Panel Plot
+
+```{r combined-panel, fig.height=8}
+# ── Display bar and pie side by side using patchwork ─────────
+combined_plot <- barplot_aa + pie_aa +
+  plot_annotation(
+    title   = "Impact of Wild-Type Amino Acids on Protein Structure & Function",
+    caption = "Doubly deleterious: SIFT < 0.05 AND FoldX > 2 kCal/mol",
+    theme   = theme(plot.title = element_text(face = "bold", size = 16))
+  )
+
+print(combined_plot)
+```
+
+---
+
+# 11. Description — Amino Acid with the Highest Impact
+
+```{r top-aa-description}
+# Print a biological description of the top amino acid
+cat("=== TOP AMINO ACID — BIOLOGICAL DESCRIPTION ===\n\n")
+
+cat(sprintf("Amino Acid : %s (%s)\n", top_aa$wt_aa, top_aa$wt_aa_name))
+cat(sprintf("Frequency  : %d doubly deleterious mutations\n\n", top_aa$Frequency))
+
+# Descriptions for the most commonly observed top amino acids
+aa_descriptions <- list(
+  R = paste(
+    "ARGININE (R) is a positively charged, hydrophilic amino acid with a",
+    "large guanidinium side chain. It is critical for:",
+    "  • Salt bridges and electrostatic interactions that stabilise protein 3D structure",
+    "  • DNA/RNA binding interfaces due to its positive charge",
+    "  • Enzyme active sites where it coordinates substrates or phosphate groups",
+    "  • Signal transduction — many kinase substrates contain Arg residues",
+    "When Arginine is mutated, both the structural electrostatic network AND",
+    "the functional binding capacity of the protein are disrupted simultaneously.",
+    sep = "\n"
+  ),
+  S = paste(
+    "SERINE (S) is a small, polar, hydroxyl-containing amino acid. It is critical for:",
+    "  • Phosphorylation sites — Serine is the most commonly phosphorylated residue",
+    "  • Hydrogen bonding networks that maintain secondary structure",
+    "  • Active sites of serine proteases (catalytic triad: Ser-His-Asp)",
+    "  • Post-translational modification hubs (glycosylation, acetylation)",
+    "Serine mutations disrupt both the structural hydrogen bond network",
+    "and critical enzymatic or signalling functions.",
+    sep = "\n"
+  ),
+  G = paste(
+    "GLYCINE (G) is the smallest amino acid with no side chain (H), giving it",
+    "exceptional conformational flexibility. It is critical for:",
+    "  • Tight turns and loops in protein backbone — only AA that fits in restricted angles",
+    "  • Collagen triple helix (Gly-X-Y repeat requires every 3rd residue to be Gly)",
+    "  • Hinge regions enabling domain movement in enzymes",
+    "Glycine mutations force a bulkier side chain into constrained backbone positions,",
+    "severely disrupting both the 3D fold and the protein's dynamic function.",
+    sep = "\n"
+  ),
+  P = paste(
+    "PROLINE (P) is a unique cyclic amino acid that introduces rigidity and kinks",
+    "in polypeptide chains. It is critical for:",
+    "  • Structural turns and bends — creates cis peptide bonds unlike other AAs",
+    "  • Collagen structure (every 3rd position in Gly-Pro-Hyp repeats)",
+    "  • Protein-protein interaction interfaces",
+    "Proline mutations remove the structural kink, unfolding loops and",
+    "disrupting binding surfaces simultaneously.",
+    sep = "\n"
+  )
+)
+
+# Print the description for the top amino acid, or a generic message
+if (top_aa$wt_aa %in% names(aa_descriptions)) {
+  cat(aa_descriptions[[top_aa$wt_aa]])
+} else {
+  cat(sprintf(
+    "%s (%s) appears frequently in doubly deleterious mutations, suggesting\n",
+    top_aa$wt_aa, top_aa$wt_aa_name
+  ))
+  cat("it occupies structurally or functionally critical positions in many proteins.\n")
+}
+```
+
+---
+
+# 12. Amino Acids with More Than 100 Occurrences
+
+```{r high-impact-analysis}
+cat("=== AMINO ACIDS WITH > 100 DELETERIOUS MUTATIONS ===\n\n")
+print(high_impact)
+
+cat("\n--- STRUCTURAL PROPERTY ---\n")
+cat(paste(
+  "Amino acids appearing in more than 100 doubly deleterious mutations tend to be",
+  "structurally CRITICAL residues. They often:",
+  "  • Occupy buried positions in the protein hydrophobic core",
+  "  • Form key hydrogen bonds or salt bridges that maintain tertiary structure",
+  "  • Sit at domain-domain interfaces where any change destabilises the fold",
+  "  • Have restricted conformational space — any substitution strains the backbone",
+  "Their high FoldX scores (> 2 kCal/mol) confirm that substituting them",
+  "significantly INCREASES the free energy of folding → the protein becomes",
+  "thermodynamically LESS STABLE and more prone to misfolding or aggregation.",
+  sep = "\n"
+))
+
+cat("\n\n--- FUNCTIONAL PROPERTY ---\n")
+cat(paste(
+  "Functionally, these high-frequency amino acids are:",
+  "  • Located in or near active sites, binding pockets, or allosteric regions",
+  "  • Involved in substrate recognition, catalysis, or cofactor binding",
+  "  • Conserved across species (low SIFT scores confirm evolutionary intolerance)",
+  "Their low SIFT scores (< 0.05) confirm that these positions are under",
+  "STRONG PURIFYING SELECTION — nature rarely tolerates changes here because",
+  "any substitution abolishes or severely impairs the protein's biological function.",
+  sep = "\n"
+))
+
+cat("\n\n--- COMBINED CONCLUSION ---\n")
+cat(paste(
+  "Amino acids with > 100 occurrences in doubly deleterious mutations represent",
+  "the most VULNERABLE positions in the human proteome — residues where a single",
+  "point mutation can simultaneously unfold the protein AND destroy its function.",
+  "These are prime candidates for:",
+  "  • Disease-causing variants in human genetic disorders",
+  "  • Drug target design (stabilising these positions therapeutically)",
+  "  • Protein engineering (avoiding these positions in synthetic proteins)",
+  sep = "\n"
+))
+```
+
+---
+
+# 13. Visualise Scores Distribution
+
+```{r score-distributions, fig.height=5}
+# ── Scatter plot: SIFT vs FoldX for all merged mutations ─────
+# Colour-code by mutation category
+merged_df <- merged_df %>%
+  mutate(Category = case_when(
+    sift_Score  < 0.05 & foldX_Score > 2 ~ "Both Deleterious",
+    sift_Score  < 0.05 & foldX_Score <= 2 ~ "Function Only",
+    sift_Score >= 0.05 & foldX_Score > 2  ~ "Structure Only",
+    TRUE                                   ~ "Neutral"
+  ))
+
+scatter_scores <- ggplot(merged_df,
+                         aes(x     = sift_Score,
+                             y     = foldX_Score,
+                             color = Category)) +
+  geom_point(alpha = 0.4, size = 1.2) +
+  # Threshold lines
+  geom_vline(xintercept = 0.05, linetype = "dashed",
+             color = "black", linewidth = 0.8) +
+  geom_hline(yintercept = 2.00, linetype = "dashed",
+             color = "black", linewidth = 0.8) +
+  # Annotate quadrants
+  annotate("text", x = 0.01, y = max(merged_df$foldX_Score) * 0.95,
+           label = "Both\nDeleterious", color = "#B71C1C",
+           fontface = "bold", size = 3.5) +
+  scale_color_manual(values = c(
+    "Both Deleterious" = "#B71C1C",
+    "Function Only"    = "#F57F17",
+    "Structure Only"   = "#1565C0",
+    "Neutral"          = "grey70"
+  )) +
+  labs(
+    title    = "SIFT Score vs FoldX Score for All Mutations",
+    subtitle = "Dashed lines = thresholds (SIFT < 0.05 | FoldX > 2)",
+    x        = "SIFT Score (< 0.05 = deleterious to function)",
+    y        = "FoldX Score in kCal/mol (> 2 = deleterious to structure)",
+    color    = "Mutation Category",
+    caption  = "Source: Galardini et al. | HackBio Dataset"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title    = element_text(face = "bold"),
+    legend.position = "bottom"
+  )
+
+print(scatter_scores)
+```
+
+---
+
+# 14. Overall Conclusions
+
+> **1. Merge strategy:** Using `specific_Protein_aa` as a composite key
+> ensures mutations are correctly matched — the same mutation code can
+> exist in different proteins, so concatenating Protein + Amino_Acid
+> prevents false matches.
+
+> **2. Doubly deleterious mutations are rare:** Only a small percentage
+> of all mutations satisfy both SIFT < 0.05 AND FoldX > 2, confirming
+> that simultaneous structural and functional disruption is the exception,
+> not the rule.
+
+> **3. Top amino acid:** The amino acid with the highest impact (highest
+> frequency in doubly deleterious mutations) tends to be one that occupies
+> **evolutionarily conserved, structurally critical positions** — often
+> involved in electrostatic networks, active sites, or backbone geometry.
+
+> **4. Amino acids with > 100 occurrences** combine two properties:
+> they are **structurally essential** (FoldX confirms destabilisation)
+> and **functionally irreplaceable** (SIFT confirms evolutionary intolerance).
+> These represent the most disease-relevant mutation hotspots in the proteome.
+
+> **5. Clinical relevance:** Identifying these amino acids supports
+> precision medicine — variants at these positions in patient genomes
+> are strong candidates for pathogenic mutations worth clinical investigation.
+
+---
+
+*End of Task 2.4 — Biochemistry & Oncology Mutational Impact Analysis*
