@@ -1,8 +1,11 @@
 ---
-title: "Task — Biochemistry & Oncology: Mutational Impact on Protein Structure & Function"
+title: 'Task — Biochemistry & Oncology: Mutational Impact on Protein Structure & Function'
 author: "Ange Maxime TCHOUTANG"
 date: "`r Sys.Date()`"
 output:
+  word_document:
+    toc: true
+    toc_depth: '3'
   html_document:
     toc: true
     toc_float: true
@@ -49,11 +52,6 @@ pacman::p_load(
 # acid substitution affects protein FUNCTION.
 # Score < 0.05 → mutation is DELETERIOUS to function
 
-sift <- read.delim(
-  "https://raw.githubusercontent.com/HackBio-Internship/public_datasets/main/R/datasets/sift.tsv",
-  sep = "\t", stringsAsFactors = FALSE
-) # due to the characteristic of the tsv format, we have an error
-
 sift <- read.table(
   "https://raw.githubusercontent.com/HackBio-Internship/public_datasets/main/R/datasets/sift.tsv",
   header = TRUE,
@@ -64,11 +62,6 @@ sift <- read.table(
 # ── FoldX dataset ────────────────────────────────────────────
 # FoldX estimates the change in protein folding free energy (ΔΔG).
 # Score > 2 kCal/mol → mutation is DELETERIOUS to structure
-
-foldx <- read.delim(
-  "https://raw.githubusercontent.com/HackBio-Internship/public_datasets/main/R/datasets/foldX.tsv",
-  sep = "\t", stringsAsFactors = FALSE
-)
 
 foldx <- read.delim(
   "https://raw.githubusercontent.com/HackBio-Internship/public_datasets/main/R/datasets/foldX.tsv",
